@@ -1,66 +1,88 @@
 organization in ThisBuild := "io.gloriousfuture"
 organizationName in ThisBuild := "The Glorious Future"
-scalaVersion in ThisBuild := "2.11.8"
 
-lazy val root = Project("openapi-scala-root", file("."))
-  .aggregate(core, testing, yaml)
+version in ThisBuild := "0.0.1"
+scalaVersion in ThisBuild := "2.11.8"
+crossScalaVersions in ThisBuild := Seq("2.10.6", "2.11.8")
+
+licenses in ThisBuild += ("Apache-2.0", url("http://opensource.org/licenses/apache-2.0"))
+
+lazy val root = Project("genspec-openapi", file("."))
+  .aggregate(
+    `genspec-openapi-core`,
+    `genspec-openapi-circe`,
+    `genspec-openapi-play`,
+    `genspec-openapi-yaml`
+  )
   .settings(
     publish := {},
     publishLocal := {}
   )
 
-val commonSettings = Seq(
+def commonProject(id: String, path: String): Project = {
+  Project(id, file(path)).settings(
 
-  scalacOptions ++= Seq(
-    "-deprecation:false",
-    "-feature",
-    "-language:higherKinds",
-    "-target:jvm-1.8",
-    "-unchecked",
-    "-Xfatal-warnings",
-    "-Xfuture",
-    "-Ywarn-unused",
-    "-Ywarn-value-discard"
-  ),
+    name := id,
+    scalaVersion := "2.11.8",
+    crossScalaVersions := Seq("2.11.8"),
+    scalacOptions ++= {
+      // the deprecation:false flag is only supported by scala >= 2.11.3, but needed for scala >= 2.11.0 to avoid warnings
+      (CrossVersion.partialVersion(scalaVersion.value) match {
 
-  Plugins.macroParadise,
+        case Some((2, scalaMinor)) if scalaMinor >= 11 =>
+          // For scala versions >= 2.11.3
+          Seq("-deprecation:false", "-target:jvm-1.8", "-Ywarn-unused")
 
-  libraryDependencies ++= Seq(
-    // Core dependencies
-    Libraries.circeCore,
-    Libraries.circeGeneric,
-    Libraries.circeOptics,
-    Libraries.circeParser,
-    Libraries.monocleCore,
-    Libraries.monocleMacro
-  ) ++ Seq(
-    // Test-only dependencies
-    Libraries.scalaTest
-  ).map(_ % Test),
+        case Some((2, scalaMinor)) if scalaMinor < 11 =>
+          // For scala versions 2.10.x we can't use certain flags
+          Seq.empty
 
-  licenses += ("Apache-2.0", url("http://opensource.org/licenses/apache-2.0"))
-)
+      }) ++ Seq(
+        "-feature",
+        "-unchecked",
+        "-Xfatal-warnings",
+        "-Xfuture",
+        "-Ywarn-value-discard"
+      )
+    },
 
-lazy val core = (project in file("core"))
-  .settings(commonSettings)
-  .settings(
-    name := "openapi-scala-core"
+    // Every project gets scalatest
+    libraryDependencies += Libraries.scalatest % Test
   )
+}
 
-lazy val testing = (project in file("testing"))
-  .settings(commonSettings)
+/**
+  * Generic code to allow converting models to OpenAPI specs.
+  */
+lazy val `genspec-openapi-core` = commonProject("genspec-openapi-core", "core")
   .settings(
-    name := "openapi-scala-testing",
+    // Cross-compile for sbt plugin
+    crossScalaVersions := Seq("2.10.6", "2.11.8"),
     libraryDependencies ++= Seq(
-      Libraries.scalaTest
+      Libraries.scalacheck,
+      Libraries.scalacheckShapeless
     )
   )
-  .dependsOn(core)
 
-lazy val yaml = (project in file("yaml"))
-  .settings(commonSettings)
+/**
+  * Build OpenAPI specs from circe model serializers.
+  */
+lazy val `genspec-openapi-circe` = commonProject("genspec-openapi-circe", "circe")
   .settings(
-    name := "openapi-scala-yaml",
+    Plugins.macroParadise,
+    libraryDependencies ++= Seq(
+      Libraries.circeGeneric,
+      Libraries.circeOptics,
+      Libraries.circeParser
+    )
+  )
+  .dependsOn(`genspec-openapi-core`)
+
+/**
+  * Print YAML for circe projects.
+  */
+lazy val `genspec-openapi-yaml` = commonProject("genspec-openapi-yaml", "yaml")
+  .settings(
     resolvers ++= Seq(
       Resolvers.circeYaml
     ),
@@ -71,5 +93,16 @@ lazy val yaml = (project in file("yaml"))
       Libraries.scalacheckOps
     ).map(_ % Test)
   )
-  .dependsOn(core, testing % Test)
+  .dependsOn(`genspec-openapi-core`, `genspec-openapi-circe`)
 
+/**
+  * Build OpenAPI specs from Play routes, controllers, and play model serializers.
+  */
+lazy val `genspec-openapi-play` = commonProject("genspec-openapi-play", "play")
+  .settings(
+    resolvers += "Typesafe repository" at "http://repo.typesafe.com/typesafe/releases/",
+    libraryDependencies ++= Seq(
+      Libraries.playServer
+    )
+  )
+  .dependsOn(`genspec-openapi-core`)
